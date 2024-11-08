@@ -1,0 +1,108 @@
+pipeline {
+    agent {
+        node {
+            label ""
+            customWorkspace "$BUILD_DIR"
+        }
+    }
+
+    environment {
+        /*GIT_URL_GAME = 'https://gitlab.com/nexus-studio/seabattle.git'
+        GIT_CREDENTIALS_GAME = 'f092a7ef-87aa-43d6-8297-ffb3c436e45c'
+        UE_PATH = 'D:\\Programm\\UnrealEngine\\UE_5.1'
+        UE_PROJECT_NAME = 'SeaBattle'
+        PACKAGE_PATH = "$BUILD_DIR\\Build\\$BUILD_NUMBER"
+        BUILD_FLAGS = '-build -cook -stage -archive -pak -package -allmaps'
+        ZIP_DIR = "Build\\$BUILD_NUMBER\\**\\*.*"
+
+        MESSAGE = "Start build: ${JOB_NAME}, number: #${BUILD_NUMBER}"
+        CLIENT_CONFIG = 'Development'
+        PLATFORM = 'Win64'
+        GIT_BRANCH_GAME = 'dev'
+        */
+        CHAT_ID = credentials('telegramChatID')
+    }
+
+    stages {
+        stage('Git clone') {
+            steps {
+                telegramSend(message: "$MESSAGE", chatId: "$CHAT_ID")
+
+                checkout([$class: 'GitSCM',
+                    branches: [[name: "$GIT_BRANCH_GAME"]],
+                    extensions: [[$class: 'CleanBeforeCheckout']],
+                    userRemoteConfigs: [[credentialsId: "$GIT_CREDENTIALS_GAME",
+                    url: "$GIT_URL_GAME"]]])
+            }
+        }
+        stage('Build') {
+            steps {
+                bat '''
+                    set Before=public bool UnoptimizedCode = false;
+                    set After=public bool UnoptimizedCode = true;
+                    set File=%BUILD_DIR%\\Source\\%UE_PROJECT_NAME%Editor.Target.cs
+                    powershell -Command "(gc '%File%') -replace '%Before%', '%After%' | Out-File  %File%"
+
+                    "%UE_PATH%\\Engine\\Build\\BatchFiles\\RunUAT.bat" BuildCookRun ^
+                    -project="%BUILD_DIR%\\%UE_PROJECT_NAME%.uproject" ^
+                    -platform=%PLATFORM% ^
+                    -clientconfig=%CLIENT_CONFIG% ^
+                    %BUILD_FLAGS% ^
+                    -ubtargs=-UnoptimizedCode
+                '''
+            }
+        }
+        stage('Run tests') {
+            steps {
+                bat '''
+                    set TestRunner="%ENGINE_EXE%" "%BUILD_DIR%\\%UE_PROJECT_NAME%.uproject" -ExecCmds="Automation RunTests %TEST_NAMES%;Quit" -nosplash -ReportExportPath="%BUILD_DIR%\\Build\\Tests" -stdout
+
+                    set ExportType=cobertura:"%BUILD_DIR%\\Build\\Tests\\Coverage\\CodeCoverageReport.xml"
+
+                    "%OPEN_CPP_COVERAGE%" --modules="%BUILD_DIR%" --sources="%BUILD_DIR%\\Source" ^
+                    --excluded_sources="%BUILD_DIR%\\SeaBattle\\Tests" ^
+                    --export_type="%ExportType%" ^
+                    -v -- %TestRunner%
+                '''
+            }
+        }
+        stage("Convert junit report to xml") {
+            steps {
+                bat '''
+                    set CONVERTED_PATH="%BUILD_DIR%\\DevOps\\tests\\ue_report_to_junit.py"
+                    set UE_TESTS_PATH="%BUILD_DIR%\\Build\\Tests\\index.json"
+                    set JUNIT_TESTS_PATH="%BUILD_DIR%\\Build\\Tests\\index.xml"
+
+                    %CONVERTED_PATH% -ue_report_path=%UE_TESTS_PATH% -junit_xml_path=%JUNIT_TESTS_PATH%
+                '''
+            }
+        }
+        stage("Publish coverage report") {
+            steps {
+                cobertura autoUpdateHealth: false,
+                    autoUpdateStability: false,
+                    coberturaReportFile: 'Build\\Tests\\Coverage\\CodeCoverageReport.xml',
+                    conditionalCoverageTargets: '70, 0, 0',
+                    failUnhealthy: false,
+                    failUnstable: false,
+                    lineCoverageTargets: '80, 0, 0',
+                    maxNumberOfBuilds: 5,
+                    methodCoverageTargets: '80, 0, 0',
+                    onlyStable: false,
+                    sourceEncoding: 'ASCII',
+                    zoomCoverageChart: false
+            }
+        }
+        stage("Publish tests report") {
+            steps {
+                junit 'Build\\Tests\\*.xml'
+            }
+        }
+    }
+    post {
+        always {
+            telegramSend(message: "Finish build: $JOB_NAME\nNumber: #$BUILD_NUMBER!\nDuration: $currentBuild.durationString\nStatus: $currentBuild.currentResult", chatId: "$CHAT_ID")
+            telegramSend(message: "--------------------", chatId: "$CHAT_ID")
+        }
+    }
+}

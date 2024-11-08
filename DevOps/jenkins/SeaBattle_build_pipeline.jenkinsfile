@@ -1,0 +1,62 @@
+pipeline {
+    agent {
+        node {
+            label ""
+            customWorkspace "$BUILD_DIR"
+        }
+    }
+
+    environment {
+        /*GIT_URL_GAME = 'https://gitlab.com/nexus-studio/seabattle.git'
+        GIT_CREDENTIALS_GAME = 'f092a7ef-87aa-43d6-8297-ffb3c436e45c'
+        UE_PATH = 'D:\\Programm\\UnrealEngine\\UE_5.1'
+        UE_PROJECT_NAME = 'SeaBattle'
+        PACKAGE_PATH = "$BUILD_DIR\\Build\\$BUILD_NUMBER"
+        BUILD_FLAGS = '-build -cook -stage -archive -pak -package -allmaps'
+        ZIP_DIR = "Build\\$BUILD_NUMBER\\**\\*.*"
+
+        MESSAGE = "Start build: ${JOB_NAME}, number: #${BUILD_NUMBER}"
+        CLIENT_CONFIG = 'Development'
+        PLATFORM = 'Win64'
+        GIT_BRANCH_GAME = 'dev'
+        */
+        CHAT_ID = credentials('telegramChatID')
+    }
+
+    stages {
+        stage('Git clone') {
+            steps {
+                telegramSend(message: "$MESSAGE", chatId: "$CHAT_ID")
+
+                checkout([$class: 'GitSCM',
+                    branches: [[name: "$GIT_BRANCH_GAME"]],
+                    extensions: [[$class: 'CleanBeforeCheckout']],
+                    userRemoteConfigs: [[credentialsId: "$GIT_CREDENTIALS_GAME",
+                    url: "$GIT_URL_GAME"]]])
+            }
+        }
+        stage('Build') {
+            steps {
+                bat '''
+                    "%UE_PATH%\\Engine\\Build\\BatchFiles\\RunUAT.bat" BuildCookRun ^
+                    -project="%BUILD_DIR%\\%UE_PROJECT_NAME%.uproject" ^
+                    -platform=%PLATFORM% ^
+                    -clientconfig=%CLIENT_CONFIG% ^
+                    -archivedirectory="%PACKAGE_PATH%" ^
+                    %BUILD_FLAGS%
+                '''
+            }
+        }
+        stage('Archive artifacts') {
+            steps {
+                archiveArtifacts artifacts: "$ZIP_DIR"
+            }
+        }
+    }
+    post {
+        always {
+            telegramSend(message: "Finish build: $JOB_NAME\nNumber: #$BUILD_NUMBER\nDuration: $currentBuild.durationString\nStatus: $currentBuild.currentResult", chatId: "$CHAT_ID")
+            telegramSend(message: "--------------------", chatId: "$CHAT_ID")
+        }
+    }
+}

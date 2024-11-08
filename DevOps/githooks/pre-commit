@@ -1,0 +1,4 @@
+#!/bin/sh
+
+#cd '..\..\'
+python 'DevOps\format_all_files.py'
